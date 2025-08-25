@@ -17,19 +17,20 @@ mongoose
     useUnifiedTopology: true,
   })
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.error("❌ MongoDB Error:", err));
+  .catch((err) => console.error("❌ MongoDB Error:", err));
 
 // API Routes
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/stocks", require("./routes/stockRoutes"));
 
-// ✅ Serve frontend (React build) in production
+// ✅ Serve frontend in production
 if (process.env.NODE_ENV === "production") {
-  app.use(express.static(path.join(__dirname, "client/build")));
+  const buildPath = path.join(__dirname, "client", "build");
+  app.use(express.static(buildPath));
 
   app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "client", "build", "index.html"));
+    res.sendFile(path.join(buildPath, "index.html"));
   });
 }
 
