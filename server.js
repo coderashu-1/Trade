@@ -12,7 +12,7 @@ app.use(cors());
 
 // MongoDB Connection
 mongoose
-  .connect(process.env.MONGO_URI, {
+  .connect(process.env.mongoURI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   })
@@ -37,3 +37,4 @@ if (process.env.NODE_ENV === "production") {
 // Start Server
 const PORT = process.env.PORT || 5051;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
