@@ -34,14 +34,13 @@ const toBinanceSymbol = (s = '') => s.replace('/', '').toUpperCase();
 const safeNumber = (x) => (typeof x === 'number' && isFinite(x) ? x : null);
 const fmt = (v) => (safeNumber(v) !== null ? v.toFixed(2) : '-');
 
-// ------------------- Price Feed Manager (singleton) -------------------
+// ------------------- Price Feed Manager -------------------
 class PriceFeedManager {
   constructor() {
     this.binancePrices = new Map();
-    this.subscribers = new Map(); // key -> Set(cb)
+    this.subscribers = new Map();
     this.ws = null;
     this.reconnectAttempt = 0;
-
     this.connect();
   }
 
@@ -50,11 +49,7 @@ class PriceFeedManager {
       if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
       this.ws = new WebSocket(BINANCE_WS_URL);
 
-      this.ws.onopen = () => {
-        this.reconnectAttempt = 0;
-        console.info('Binance WS open');
-      };
-
+      this.ws.onopen = () => { this.reconnectAttempt = 0; console.info('Binance WS open'); };
       this.ws.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
@@ -68,29 +63,22 @@ class PriceFeedManager {
               this.broadcast(key, price);
             }
           }
-        } catch (err) {
-          console.error('WS parse error', err);
-        }
+        } catch (err) { console.error('WS parse error', err); }
       };
-
       this.ws.onclose = () => {
         this.reconnectAttempt += 1;
         const delay = Math.min(30000, 500 * Math.pow(2, this.reconnectAttempt));
         console.warn('WS closed, reconnect in', delay);
         setTimeout(() => this.connect(), delay);
       };
-
       this.ws.onerror = (err) => console.warn('WS err', err);
-    } catch (err) {
-      console.error('WS connect err', err);
-    }
+    } catch (err) { console.error('WS connect err', err); }
   }
 
   subscribe(key, cb) {
     if (!this.subscribers.has(key)) this.subscribers.set(key, new Set());
     this.subscribers.get(key).add(cb);
 
-    // immediate emit if we have price
     const { provider, symbol } = normalizePair(key);
     if (provider === 'BINANCE') {
       const p = this.binancePrices.get(toBinanceSymbol(symbol));
@@ -114,7 +102,7 @@ class PriceFeedManager {
 
 const priceFeed = new PriceFeedManager();
 
-// ------------------- Chart Helper (Lightweight) -------------------
+// ------------------- Chart Hook -------------------
 const useLightweightChart = (containerRef) => {
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
@@ -146,23 +134,10 @@ const useLightweightChart = (containerRef) => {
     };
   }, [containerRef]);
 
-  const setCandles = useCallback((candles) => {
-    if (seriesRef.current) seriesRef.current.setData(candles);
-  }, []);
-
-  const updateLast = useCallback((bar) => {
-    if (seriesRef.current) seriesRef.current.update(bar);
-  }, []);
-
-  const addMarker = useCallback((marker) => {
-    markersRef.current.push(marker);
-    if (seriesRef.current) seriesRef.current.setMarkers([...markersRef.current]);
-  }, []);
-
-  const clearMarkers = useCallback(() => {
-    markersRef.current = [];
-    if (seriesRef.current) seriesRef.current.setMarkers([]);
-  }, []);
+  const setCandles = useCallback((candles) => { if (seriesRef.current) seriesRef.current.setData(candles); }, []);
+  const updateLast = useCallback((bar) => { if (seriesRef.current) seriesRef.current.update(bar); }, []);
+  const addMarker = useCallback((marker) => { markersRef.current.push(marker); if (seriesRef.current) seriesRef.current.setMarkers([...markersRef.current]); }, []);
+  const clearMarkers = useCallback(() => { markersRef.current = []; if (seriesRef.current) seriesRef.current.setMarkers([]); }, []);
 
   return { setCandles, updateLast, addMarker, clearMarkers, chartRef, seriesRef };
 };
@@ -173,36 +148,31 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
   const [livePrice, setLivePrice] = useState(null);
   const [connecting, setConnecting] = useState(true);
 
-  // bet form
   const [betAmount, setBetAmount] = useState(10);
   const [betDuration, setBetDuration] = useState(5);
   const [stopLossEnabled, setStopLossEnabled] = useState(false);
   const [stopLossAmount, setStopLossAmount] = useState(0);
   const [strikePrice, setStrikePrice] = useState('');
 
-  // active bet
   const [activeBet, setActiveBet] = useState(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const timerRef = useRef(null);
 
-  // history
   const [betHistory, setBetHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
 
-  // waiting-for-strike and guard
   const [waitingForStrike, setWaitingForStrike] = useState(false);
   const hasTriggeredRef = useRef(false);
   const strikeUnsubRef = useRef(null);
 
-  // chart
   const chartContainerRef = useRef();
-  const { setCandles, updateLast, addMarker } = useLightweightChart(chartContainerRef);
+  const { setCandles, updateLast, addMarker, clearMarkers } = useLightweightChart(chartContainerRef);
 
-  // last live price ref
   const livePriceRef = useRef(null);
   useEffect(() => { livePriceRef.current = livePrice; }, [livePrice]);
+  const getLatestPrice = useCallback(() => livePriceRef.current ?? livePrice, [livePrice]);
 
-  // Subscribe to live price feed for selected asset
+  // ------------------- Price Feed Subscription -------------------
   useEffect(() => {
     setConnecting(true);
     const unsub = priceFeed.subscribe(selectedValue, ({ price }) => {
@@ -212,7 +182,7 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
     return () => { try { unsub(); } catch (e) {} };
   }, [selectedValue]);
 
-  // Fetch candles on symbol change
+  // ------------------- Load Candles -------------------
   useEffect(() => {
     const loadHistoryCandles = async () => {
       try {
@@ -223,7 +193,7 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
           const r = await fetch(url);
           if (!r.ok) throw new Error('klines failed');
           const data = await r.json();
-          const candles = data.map((c) => ({
+          const candles = data.map(c => ({
             time: Math.floor(c[0] / 1000),
             open: parseFloat(c[1]),
             high: parseFloat(c[2]),
@@ -242,14 +212,12 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
           setCandles(candles);
           setLivePrice(candles[candles.length - 1].close);
         }
-      } catch (err) {
-        console.error('Failed to load candles', err);
-      }
+      } catch (err) { console.error('Failed to load candles', err); }
     };
     loadHistoryCandles();
   }, [selectedValue, setCandles]);
 
-  // Update last candle as ticks come
+  // ------------------- Update Last Candle -------------------
   useEffect(() => {
     if (!safeNumber(livePrice)) return;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -257,7 +225,7 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
     try { updateLast(bar); } catch (e) {}
   }, [livePrice, updateLast]);
 
-  // Load today's bet history
+  // ------------------- Load Bet History -------------------
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -268,7 +236,7 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
           body: JSON.stringify({ id: auth.user._id })
         });
         const data = await res.json();
-        const fmt = (d) => ({
+        const fmtBet = (d) => ({
           time: new Date(d.date).toLocaleString(),
           direction: d.data?.direction || '-',
           result: d.data?.outcome === 'stopped' ? 'Stopped (Loss)' : (d.data?.outcome || '-'),
@@ -280,7 +248,7 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
         });
         const today = new Date(); today.setHours(0,0,0,0);
         if (mounted) {
-          const todayBets = (data || []).map(fmt).filter(b => b.rawDate >= today);
+          const todayBets = (data || []).map(fmtBet).filter(b => b.rawDate >= today);
           setBetHistory(todayBets);
         }
       } catch (e) { console.error(e); }
@@ -289,42 +257,25 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
     return () => { mounted = false; };
   }, [auth.user._id]);
 
-  // get latest price safely
-  const getLatestPrice = useCallback(() => livePriceRef.current ?? livePrice, [livePrice]);
-
-  // Helper: clear strike subscription
+  // ------------------- Clear Strike -------------------
   const clearStrikeSubscription = useCallback(() => {
-    if (strikeUnsubRef.current) {
-      try { strikeUnsubRef.current(); } catch (e) {}
-      strikeUnsubRef.current = null;
-    }
+    if (strikeUnsubRef.current) { try { strikeUnsubRef.current(); } catch (e) {} strikeUnsubRef.current = null; }
   }, []);
 
-  // When selectedValue or strikePrice changes, cancel any pending strike (user editing cancels)
   useEffect(() => {
-    // If user edits asset or strike while waiting, cancel previous wait.
     if (waitingForStrike) {
       clearStrikeSubscription();
       hasTriggeredRef.current = false;
       setWaitingForStrike(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedValue, strikePrice]);
+  }, [selectedValue, strikePrice, waitingForStrike, clearStrikeSubscription]);
 
-  // beginBet: starts countdown and places entry marker
+  // ------------------- Begin Bet -------------------
   const beginBet = useCallback((bet) => {
     setActiveBet(bet);
     setTimeLeft(bet.duration);
 
-    try {
-      addMarker({
-        time: Math.floor(Date.now() / 1000),
-        position: bet.direction === 'up' ? 'belowBar' : 'aboveBar',
-        color: bet.direction === 'up' ? '#4caf50' : '#f44336',
-        shape: 'arrowUp',
-        text: `Entry ${fmt(bet.entryPrice)}`
-      });
-    } catch (e) { console.error(e); }
+    try { addMarker({ time: Math.floor(Date.now() / 1000), position: bet.direction === 'up' ? 'belowBar' : 'aboveBar', color: bet.direction === 'up' ? '#4caf50' : '#f44336', shape: 'arrowUp', text: `Entry ${fmt(bet.entryPrice)}` }); } catch (e) { console.error(e); }
 
     let seconds = bet.duration;
     timerRef.current = setInterval(async () => {
@@ -333,16 +284,14 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
       if (stopLossEnabled && stopLossAmount > 0 && safeNumber(current) !== null) {
         const priceMovement = bet.direction === 'up' ? (bet.entryPrice - current) : (current - bet.entryPrice);
         if (priceMovement >= stopLossAmount) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
+          clearInterval(timerRef.current); timerRef.current = null;
           await finalizeBet('stopped', current, bet);
           return;
         }
       }
 
       if (seconds <= 1) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+        clearInterval(timerRef.current); timerRef.current = null;
         const didWin = (bet.direction === 'up' && current > bet.entryPrice) || (bet.direction === 'down' && current < bet.entryPrice);
         await finalizeBet(didWin ? 'won' : 'lost', current, bet);
       } else {
@@ -350,43 +299,28 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
         setTimeLeft(seconds);
       }
     }, 1000);
-  }, [addMarker, getLatestPrice, stopLossAmount, stopLossEnabled]);
+  }, [addMarker, getLatestPrice, stopLossAmount, stopLossEnabled, finalizeBet]);
 
-  // finalizeBet: exit marker, save, refresh
+  // ------------------- Finalize Bet -------------------
   const finalizeBet = useCallback(async (outcome, exitPrice, bet) => {
-    try {
-      addMarker({
-        time: Math.floor(Date.now() / 1000),
-        position: bet.direction === 'up' ? 'aboveBar' : 'belowBar',
-        color: '#2196f3',
-        shape: 'arrowDown',
-        text: `Exit ${fmt(exitPrice)}`
-      });
-    } catch (e) { console.error(e); }
+    try { addMarker({ time: Math.floor(Date.now() / 1000), position: bet.direction === 'up' ? 'aboveBar' : 'belowBar', color: '#2196f3', shape: 'arrowDown', text: `Exit ${fmt(exitPrice)}` }); } catch (e) { console.error(e); }
 
     const payload = { value: bet.amount, price: bet.entryPrice, quantity: 1, ticker: selectedValue, data: { resultPrice: exitPrice, direction: bet.direction, outcome } };
     try {
       await buyStock(payload);
       const rec = { time: new Date().toLocaleString(), direction: bet.direction, result: outcome === 'stopped' ? 'Stopped (Loss)' : outcome, entryPrice: bet.entryPrice, resultPrice: exitPrice, amount: bet.amount, pair: selectedValue };
       setBetHistory((p) => [rec, ...p]);
-      console.log('Bet saved', rec);
-    } catch (err) {
-      console.error('Error saving bet', err);
-    } finally {
-      setActiveBet(null);
-      setTimeLeft(0);
-      hasTriggeredRef.current = false;
-      clearStrikeSubscription();
-      setWaitingForStrike(false);
+    } catch (err) { console.error('Error saving bet', err); }
+    finally {
+      setActiveBet(null); setTimeLeft(0); hasTriggeredRef.current = false; clearStrikeSubscription(); setWaitingForStrike(false);
       try { await refreshUserData(); } catch (e) {}
     }
   }, [addMarker, buyStock, refreshUserData, selectedValue, clearStrikeSubscription]);
 
-  // startBet: immediate or strike-based start
+  // ------------------- Start Bet -------------------
   const startBet = useCallback(async (direction) => {
     if (activeBet) return alert('A bet is already active');
-    setActiveBet(null);
-    setTimeLeft(0);
+    setActiveBet(null); setTimeLeft(0);
 
     const balance = auth.user?.balance || 0;
     if (!betAmount || betAmount <= 0) return alert('Bet amount must be > 0');
@@ -394,232 +328,107 @@ const LiveTradingWithChartMarkers = ({ auth, refreshUserData, buyStock }) => {
 
     const strike = strikePrice ? parseFloat(strikePrice) : null;
     if (strike && isFinite(strike)) {
-      // cancel any previous subscription first
-      clearStrikeSubscription();
-      hasTriggeredRef.current = false;
-      setWaitingForStrike(true);
-
+      clearStrikeSubscription(); hasTriggeredRef.current = false; setWaitingForStrike(true);
       const key = selectedValue;
       const unsub = priceFeed.subscribe(key, ({ price }) => {
         if (!isFinite(price)) return;
-
-        // If already triggered, ignore
         if (hasTriggeredRef.current) return;
-
-        // Check crossing
         const crossed = (direction === 'up' && price >= strike) || (direction === 'down' && price <= strike);
         if (crossed) {
-          // Immediately set guard to prevent any race
           hasTriggeredRef.current = true;
-          // Unsubscribe immediately
-          try { unsub(); } catch (e) {}
-          strikeUnsubRef.current = null;
-          setWaitingForStrike(false);
-
-          // Begin bet with entry price at crossing
+          try { unsub(); } catch (e) {} strikeUnsubRef.current = null; setWaitingForStrike(false);
           const bet = { direction, amount: betAmount, entryPrice: price, duration: betDuration, strike };
           beginBet(bet);
         }
       });
-
       strikeUnsubRef.current = unsub;
       return;
     }
 
-    // immediate start (no strike)
     const current = getLatestPrice();
     if (!isFinite(current)) return alert('Current price unavailable');
     const bet = { direction, amount: betAmount, entryPrice: current, duration: betDuration, strike: null };
     beginBet(bet);
   }, [activeBet, auth.user, betAmount, betDuration, beginBet, clearStrikeSubscription, getLatestPrice, selectedValue, strikePrice]);
 
-  // Cancel pending strike (user-driven)
-  const cancelPending = useCallback(() => {
-    clearStrikeSubscription();
-    hasTriggeredRef.current = false;
-    setWaitingForStrike(false);
-  }, [clearStrikeSubscription]);
+  const cancelPending = useCallback(() => { clearStrikeSubscription(); hasTriggeredRef.current = false; setWaitingForStrike(false); }, [clearStrikeSubscription]);
 
-  // cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      clearStrikeSubscription();
-    };
-  }, [clearStrikeSubscription]);
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); clearStrikeSubscription(); }, [clearStrikeSubscription]);
 
-  // History item renderer
+  // ------------------- Render History -------------------
   const renderHistoryItem = (h, idx) => (
     <div key={idx} style={{ padding: 8, marginBottom: 6, borderRadius: 6, background: '#141414' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <strong>{h.pair}</strong>
-        <span style={{ color: '#aaa' }}>{h.time}</span>
-      </div>
-      <div>Dir: <b>{h.direction?.toUpperCase()}</b> • Amount: <b>${(h.amount||0).toFixed(2)}</b></div>
-      <div>Entry: ${fmt(h.entryPrice)} → Exit: ${fmt(h.resultPrice)}</div>
-      <div>Result: <b>{h.result}</b></div>
+      <strong>{h.time}</strong> - {h.pair} - {h.direction.toUpperCase()} - Entry: {fmt(h.entryPrice)} - Result: {h.result} {h.resultPrice !== null ? `(Exit: ${fmt(h.resultPrice)})` : ''} - Amount: {fmt(h.amount)}
     </div>
   );
 
+  // ------------------- JSX -------------------
+  const diffText = (() => {
+    const d = safeNumber(livePrice) !== null && activeBet ? livePrice - activeBet.entryPrice : null;
+    return d !== null ? `${d >= 0 ? '+' : ''}${fmt(d)}` : '-';
+  })();
+
   return (
-    <div style={{ minHeight: '100vh', background: '#0f0f0f', color: '#fff' }}>
+    <>
       <NavBar />
-      <Container fluid className='py-4'>
+      <Container fluid style={{ padding: 16, background: '#0f0f0f', color: '#fff' }}>
         <Row>
           <Col md={4}>
-            <div style={{ padding: 16, borderRadius: 10, background: 'linear-gradient(180deg,#171717,#0f0f0f)', border: '1px solid #ffc107' }}>
-              <h4 style={{ color: '#ffc107', textAlign: 'center' }}>📈 Trading Panel</h4>
-
-              <div style={{ marginTop: 8 }}>
-                <div style={{ color: '#ccc' }}>Balance</div>
-                <div style={{ color: '#28a745', fontWeight: 700 }}>${Number(auth.user?.balance || 0).toFixed(2)}</div>
-              </div>
-
-              <Form.Group className='mt-3'>
-                <Form.Label style={{ color: '#ccc' }}>Asset</Form.Label>
-                {/* Allow editing asset even when waiting; editing cancels pending automatically */}
-                <Form.Control
-                  as='select'
-                  value={selectedValue}
-                  onChange={(e) => setSelectedValue(e.target.value)}
-                  disabled={!!activeBet}
-                >
-                  {Array.from(new Set(AVAILABLE_PAIRS.map(p => p.group))).map(g => (
-                    <optgroup key={g} label={g}>
-                      {AVAILABLE_PAIRS.filter(p => p.group === g).map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                    </optgroup>
-                  ))}
-                </Form.Control>
-              </Form.Group>
-
-              <div style={{ marginTop: 12 }}>
-                Current Price: <strong>${fmt(livePrice)}</strong> {connecting && <Spinner size='sm' animation='border' />}
-              </div>
-
-              <Form.Group className='mt-3'>
-                <Form.Label>Bet Amount</Form.Label>
-                <Form.Control
-                  type='number'
-                  min='0'
-                  value={betAmount}
-                  onChange={(e) => setBetAmount(parseFloat(e.target.value) || 0)}
-                  disabled={!!activeBet}
-                />
-              </Form.Group>
-
-              <Form.Group className='mt-3'>
-                <Form.Label>Duration (sec)</Form.Label>
-                <Form.Control
-                  as='select'
-                  value={betDuration}
-                  onChange={(e) => setBetDuration(parseInt(e.target.value) || 5)}
-                  disabled={!!activeBet}
-                >
-                  {[5,10,15,30,60].map(t => <option key={t} value={t}>{t} sec</option>)}
-                </Form.Control>
-              </Form.Group>
-
-              <Form.Group className='mt-3'>
-                <Form.Label>Strike / Trigger Price (optional)</Form.Label>
-                {/* Allow editing strike while waiting — editing cancels previous pending subscription */}
-                <Form.Control
-                  value={strikePrice}
-                  onChange={(e) => setStrikePrice(e.target.value)}
-                  placeholder='Leave empty to start immediately'
-                  disabled={!!activeBet}
-                />
-              </Form.Group>
-
-              <Form.Group className='mt-3'>
-                <Form.Check label='Enable Stop Loss' checked={stopLossEnabled} onChange={(e) => setStopLossEnabled(e.target.checked)} disabled={!!activeBet} />
-              </Form.Group>
-
+            <Form.Group>
+              <Form.Label>Select Pair</Form.Label>
+              <Form.Control as="select" value={selectedValue} onChange={(e) => setSelectedValue(e.target.value)}>
+                {Array.from(new Set(AVAILABLE_PAIRS.map(p => p.group))).map(g => (
+                  <optgroup key={g} label={g}>
+                    {AVAILABLE_PAIRS.filter(p => p.group === g).map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                  </optgroup>
+                ))}
+              </Form.Control>
+            </Form.Group>
+            <Form.Group className="mt-2">
+              <Form.Label>Bet Amount</Form.Label>
+              <Form.Control type="number" value={betAmount} onChange={e => setBetAmount(parseFloat(e.target.value))} />
+            </Form.Group>
+            <Form.Group className="mt-2">
+              <Form.Label>Duration (seconds)</Form.Label>
+              <Form.Control type="number" value={betDuration} onChange={e => setBetDuration(parseFloat(e.target.value))} />
+            </Form.Group>
+            <Form.Group className="mt-2">
+              <Form.Label>Strike Price (optional)</Form.Label>
+              <Form.Control type="number" value={strikePrice} onChange={e => setStrikePrice(e.target.value)} />
+            </Form.Group>
+            <Form.Group className="mt-2">
+              <Form.Check type="checkbox" label="Enable Stop Loss" checked={stopLossEnabled} onChange={e => setStopLossEnabled(e.target.checked)} />
               {stopLossEnabled && (
-                <Form.Group className='mt-2'>
-                  <Form.Label>Stop Loss Amount (absolute)</Form.Label>
-                  <Form.Control type='number' min='0' value={stopLossAmount} onChange={(e) => setStopLossAmount(parseFloat(e.target.value) || 0)} disabled={!!activeBet} />
-                </Form.Group>
+                <Form.Control type="number" placeholder="Stop loss amount" value={stopLossAmount} onChange={e => setStopLossAmount(parseFloat(e.target.value))} className="mt-1" />
               )}
-
-              <Row className='mt-3'>
-                <Col>
-                  <Button variant='outline-success' onClick={() => startBet('up')} disabled={!!activeBet} style={{ width: '100%' }}>
-                    Buy
-                  </Button>
-                </Col>
-                <Col>
-                  <Button variant='outline-danger' onClick={() => startBet('down')} disabled={!!activeBet} style={{ width: '100%' }}>
-                    Sell
-                  </Button>
-                </Col>
-              </Row>
-
-              {/* When waiting for strike — show clear Cancel button and message (inputs remain editable) */}
-              {waitingForStrike && (
-                <div style={{ marginTop: 12 }}>
-                  <Alert variant='warning' className='mb-2' style={{ padding: '8px 12px' }}>
-                    Waiting for price to reach strike <strong>{strikePrice}</strong>. You can edit asset/strike to cancel or press Cancel.
-                  </Alert>
-                  <Button variant='outline-light' onClick={cancelPending} style={{ width: '100%' }}>Cancel Pending Strike</Button>
-                </div>
-              )}
-
-              {activeBet && (
-                <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: '#111' }}>
-                  <div style={{ fontSize: 14, color: '#ccc' }}>Active Bet</div>
-                  <div style={{ fontWeight: 700 }}>{selectedValue} • {activeBet.direction.toUpperCase()}</div>
-                  <div>Entry: ${fmt(activeBet.entryPrice)} • Amount: ${activeBet.amount.toFixed(2)}</div>
-                  <div>Time left: {timeLeft}s</div>
-                </div>
-              )}
-
-              <div style={{ marginTop: 12 }}>
-                <h6 style={{ color: '#ccc' }}>Bet History (Today)</h6>
-                <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-                  {loadingHistory ? <div style={{ color: '#888' }}><Spinner size='sm' animation='border' /> Loading...</div> : (betHistory.length === 0 ? <div style={{ color: '#888' }}>No bets yet</div> : betHistory.map(renderHistoryItem))}
-                </div>
-              </div>
+            </Form.Group>
+            <div className="mt-3 d-flex gap-2">
+              <Button variant="success" onClick={() => startBet('up')} disabled={activeBet || waitingForStrike}>BUY UP</Button>
+              <Button variant="danger" onClick={() => startBet('down')} disabled={activeBet || waitingForStrike}>BUY DOWN</Button>
+              {waitingForStrike && <Button variant="secondary" onClick={cancelPending}>Cancel Pending</Button>}
+            </div>
+            <div className="mt-3">
+              <strong>Live Price: </strong>{connecting ? <Spinner animation="border" size="sm" /> : fmt(livePrice)} <br />
+              {activeBet && <span><strong>Diff:</strong> {diffText} | Time Left: {timeLeft}s</span>}
             </div>
           </Col>
-
           <Col md={8}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {activeBet && (
-                <div style={{ padding: 10 }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                    <div>
-                      <div style={{ color: '#ccc' }}>Active Trade</div>
-                      <div style={{ fontWeight:700 }}>{selectedValue} • {activeBet.direction.toUpperCase()}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight:700, fontSize: 18 }}>${fmt(livePrice)}</div>
-                      <div style={{ color: (activeBet.direction === 'up' ? (livePrice > activeBet.entryPrice ? '#0f0' : '#f33') : (livePrice < activeBet.entryPrice ? '#0f0' : '#f33')), fontWeight:700 }}>
-                        { (() => { const d = safeNumber(livePrice) !== null ? livePrice - activeBet.entryPrice : null; return d !== null ? `${d >= 0 ? '+' : ''}${fmt(d)}` : '-' })() }
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div ref={chartContainerRef} style={{ height: 520, borderRadius: 8, overflow: 'hidden' }} />
-
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <div style={{ color:'#888' }}>Chart powered by lightweight-charts; markers show entry & exit.</div>
-                <div>
-                  <Button variant='secondary' onClick={() => { priceFeed.connect(); setConnecting(true); }}>Reconnect Feed</Button>
-                </div>
-              </div>
-            </div>
+            <div ref={chartContainerRef} style={{ width: '100%', height: 520, background: '#000' }} />
+          </Col>
+        </Row>
+        <Row className="mt-4">
+          <Col>
+            <h5>Today's Bet History</h5>
+            {loadingHistory ? <Spinner animation="border" /> : betHistory.map(renderHistoryItem)}
           </Col>
         </Row>
       </Container>
       <Footerv2 />
-    </div>
+    </>
   );
 };
 
 LiveTradingWithChartMarkers.propTypes = { auth: PropTypes.object.isRequired, refreshUserData: PropTypes.func.isRequired, buyStock: PropTypes.func.isRequired };
 
-const mapStateToProps = (state) => ({ auth: state.auth, user: state.user });
+const mapStateToProps = (state) => ({ auth: state.auth });
 export default connect(mapStateToProps, { refreshUserData, buyStock })(LiveTradingWithChartMarkers);
-
