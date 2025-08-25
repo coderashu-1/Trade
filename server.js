@@ -11,20 +11,31 @@ app.use(express.json());
 app.use(cors());
 
 // MongoDB Connection
+const mongoURI = process.env.mongoURI;
+if (!mongoURI) {
+  console.error("❌ Error: mongoURI is not defined in environment variables");
+  process.exit(1); // stop the server
+}
+
 mongoose
-  .connect(process.env.mongoURI, {
+  .connect(mongoURI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   })
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch((err) => console.error("❌ MongoDB Error:", err));
+  .catch((err) => {
+    console.error("❌ MongoDB Error:", err);
+    process.exit(1);
+  });
 
 // API Routes
-app.use("/api/auth", require("./routes/authRoutes"));
-app.use("/api/users", require("./routes/userRoutes"));
-app.use("/api/stocks", require("./routes/stockRoutes"));
+app.use("/api/authorize", require("./api/authorize"));
+app.use("/api/user", require("./api/user"));
+app.use("/api/stocks", require("./api/stocks"));
+app.use("/api/iex", require("./api/iex"));
+app.use("/api/email", require("./api/email"));
 
-// ✅ Serve frontend in production
+// Serve frontend in production
 if (process.env.NODE_ENV === "production") {
   const buildPath = path.join(__dirname, "client", "build");
   app.use(express.static(buildPath));
@@ -37,4 +48,3 @@ if (process.env.NODE_ENV === "production") {
 // Start Server
 const PORT = process.env.PORT || 5051;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
