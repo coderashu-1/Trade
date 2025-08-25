@@ -3,23 +3,22 @@ import React, { useEffect, useRef, useState } from "react";
 const TradingChart = () => {
   const containerRef = useRef(null);
   const [symbol, setSymbol] = useState("NASDAQ:AAPL");
-  const [inputValue, setInputValue] = useState(symbol);
 
   const loadChart = (selectedSymbol) => {
-    if (!window.TradingView) return;
+    if (!window.TradingView || !containerRef.current) return;
 
     // Clear previous chart
     containerRef.current.innerHTML = "";
 
     new window.TradingView.widget({
-      container_id: "tradingview_chart",
+      container_id: containerRef.current.id,
       width: "100%",
-      height: "500px",
+      height: 500,
       symbol: selectedSymbol,
       interval: "D",
       timezone: "Etc/UTC",
       theme: "light",
-      style: "1",
+      style: 1,
       locale: "en",
       enable_publishing: false,
       hide_top_toolbar: false,
@@ -28,53 +27,25 @@ const TradingChart = () => {
     });
   };
 
+  // Load TradingView script once
   useEffect(() => {
+    if (window.TradingView) {
+      loadChart(symbol);
+      return;
+    }
+
     const script = document.createElement("script");
     script.src = "https://s3.tradingview.com/tv.js";
     script.async = true;
-    script.onload = () => {
-      loadChart(symbol);
-    };
+    script.onload = () => loadChart(symbol);
     document.body.appendChild(script);
 
     return () => {
       document.body.removeChild(script);
     };
-  }, []);
+  }, [symbol]); // include symbol to reload safely
 
-  // Reload chart when symbol changes
-  useEffect(() => {
-    if (window.TradingView) {
-      loadChart(symbol);
-    }
-  }, [symbol]);
-
-  // Handle form submit to update symbol
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (inputValue.trim() !== "") {
-      setSymbol(inputValue.trim().toUpperCase());
-    }
-  };
-
-  return (
-    <div>
-      {/* <form onSubmit={handleSubmit} style={{ marginBottom: "1rem" }}>
-        <input
-          type="text"
-          placeholder="Enter stock symbol (e.g. NASDAQ:AAPL)"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          style={{ padding: "0.5rem", width: "300px" }}
-        />
-        <button type="submit" style={{ padding: "0.5rem 1rem", marginLeft: "0.5rem" }}>
-          Load
-        </button>
-      </form> */}
-
-      <div id="tradingview_chart" ref={containerRef}></div>
-    </div>
-  );
+  return <div id="tradingview_chart" ref={containerRef}></div>;
 };
 
 export default TradingChart;
