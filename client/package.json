@@ -41,7 +41,7 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
-  "proxy": "http://localhost:5051",
+  "proxy": "https://tradebackend-ptgf.onrender.com/",
   "eslintConfig": {
     "extends": "react-app"
   },
@@ -63,3 +63,4 @@
     "babel-plugin-emotion": "^10.0.27"
   }
 }
+
