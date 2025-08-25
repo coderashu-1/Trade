@@ -13,7 +13,7 @@
     "client": "npm start --prefix client",
     "client:build": "npm run build --prefix client",
     "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "postinstall": "npm run client:build"
+    "postinstall": "npm run client-install && npm run client:build"
   },
   "author": "Ryan Floyd",
   "license": "MIT",
