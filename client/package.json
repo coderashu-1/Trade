@@ -35,13 +35,12 @@
     "redux-thunk": "^2.3.0",
     "uuid": "^3.3.3"
   },
- "scripts": {
-  "start": "react-scripts start",
-  "build": "react-scripts --openssl-legacy-provider build",
-  "test": "react-scripts test",
-  "eject": "react-scripts eject"
-},
-  "proxy": "https://tradebackend-ptgf.onrender.com/",
+  "scripts": {
+    "start": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
   "eslintConfig": {
     "extends": "react-app"
   },
@@ -63,5 +62,3 @@
     "babel-plugin-emotion": "^10.0.27"
   }
 }
-
-
