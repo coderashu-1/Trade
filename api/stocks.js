@@ -42,14 +42,14 @@ router.post("/buy", authorize, async (req, res) => {
     // ✅ Step 2: If won, credit winnings (2x payout)
     let outcomeLog = `Placed bet on ${ticker} at $${price} for $${betCost} on ${moment().format("L")}.`;
 
-    if (data?.outcome === "won") {
+    if (data && data.outcome === "won") {
       const payout = betCost * 2;
       currentBalance += payout;
 
       outcomeLog += ` ✅ WON: Credited $${payout}.`;
-    } else if (data?.outcome === "lost") {
+    } else if (data && data.outcome === "lost") {
       outcomeLog += ` ❌ LOST: Bet amount lost.`;
-    } else if (data?.outcome === "stopped") {
+    } else if (data && data.outcome === "stopped") {
       outcomeLog += ` ⚠️ STOPPED (Loss): Bet stopped via stop loss.`;
     }
 
@@ -81,7 +81,6 @@ router.post("/buy", authorize, async (req, res) => {
     res.status(500).json({ msg: "Failed to process transaction" });
   }
 });
-
 
 // ✅ Sell or delete stock
 router.post("/delete", authorize, async (req, res) => {
