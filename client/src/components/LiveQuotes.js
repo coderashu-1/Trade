@@ -3,33 +3,42 @@ import { Card, Spinner, Button } from "react-bootstrap";
 import axios from "axios";
 
 const STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "NFLX", "NVDA"];
+const API_KEY = "d1sffn9r01qqlgb2vfv0d1sffn9r01qqlgb2vfvg";
 
 const LiveQuotes = () => {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   const fetchQuotes = async () => {
     setLoading(true);
     try {
       const results = await Promise.all(
         STOCK_SYMBOLS.map(async (symbol) => {
-          const res = await axios.get(
-            `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=d1sffn9r01qqlgb2vfv0d1sffn9r01qqlgb2vfvg`
-          );
-          return {
-            symbol,
-            current: res.data.c,
-            open: res.data.o,
-            high: res.data.h,
-            low: res.data.l,
-            previousClose: res.data.pc,
-            change: res.data.c - res.data.pc,
-          };
+          try {
+            const res = await axios.get(
+              `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${API_KEY}`
+            );
+            const data = res.data || {};
+            return {
+              symbol,
+              current: data.c ?? null,
+              open: data.o ?? null,
+              high: data.h ?? null,
+              low: data.l ?? null,
+              previousClose: data.pc ?? null,
+              change: data.c != null && data.pc != null ? data.c - data.pc : null,
+            };
+          } catch (err) {
+            console.error(`Error fetching ${symbol}:`, err);
+            return { symbol, current: null, open: null, high: null, low: null, previousClose: null, change: null };
+          }
         })
       );
       setQuotes(results);
-    } catch (error) {
-      console.error("Error fetching quotes:", error);
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.error("Error fetching quotes:", err);
     }
     setLoading(false);
   };
@@ -37,6 +46,14 @@ const LiveQuotes = () => {
   useEffect(() => {
     fetchQuotes();
   }, []);
+
+  const renderChange = (change, previousClose) => {
+    if (change == null || previousClose == null) return "N/A";
+    const isPositive = change >= 0;
+    const sign = isPositive ? "+" : "";
+    const percent = ((change / previousClose) * 100).toFixed(2);
+    return `${sign}${change.toFixed(2)} (${percent}%)`;
+  };
 
   return (
     <div className="text-center my-4" style={{ fontFamily: "'Segoe UI', Tahoma, sans-serif" }}>
@@ -48,7 +65,7 @@ const LiveQuotes = () => {
           background: "linear-gradient(90deg, #007bff, #00c6ff)",
           WebkitBackgroundClip: "text",
           WebkitTextFillColor: "transparent",
-          textShadow: "0 0 6px rgba(0,123,255,0.4)"
+          textShadow: "0 0 6px rgba(0,123,255,0.4)",
         }}
       >
         Live Stock Quotes
@@ -68,8 +85,11 @@ const LiveQuotes = () => {
         <Spinner animation="border" variant="primary" />
       ) : (
         <div className="d-flex flex-wrap justify-content-center gap-3">
-          {quotes.map(({ symbol, current, change, open, high, low, previousClose }) => {
-            const isPositive = change >= 0;
+          {quotes.map((q) => {
+            if (!q || typeof q !== "object") return null;
+            const { symbol, current, change, previousClose, open, high, low } = q;
+            const isPositive = change != null && change >= 0;
+
             return (
               <Card
                 key={symbol}
@@ -92,30 +112,35 @@ const LiveQuotes = () => {
                   style={{
                     fontSize: "1.25rem",
                     fontWeight: "700",
-                    color: isPositive ? "#28a745" : "#dc3545"
+                    color: isPositive ? "#28a745" : "#dc3545",
                   }}
                 >
-                  ${current?.toFixed(2)}
+                  {current != null ? `$${current.toFixed(2)}` : "N/A"}
                 </Card.Subtitle>
                 <div
                   style={{
                     fontSize: "0.85rem",
                     fontWeight: "600",
                     color: isPositive ? "#28a745" : "#dc3545",
-                    marginBottom: "0.5rem"
+                    marginBottom: "0.5rem",
                   }}
                 >
-                  {isPositive ? "+" : ""}
-                  {change.toFixed(2)} ({((change / previousClose) * 100).toFixed(2)}%)
+                  {renderChange(change, previousClose)}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "#555" }}>
-                  <div>O: ${open?.toFixed(2)}</div>
-                  <div>H: ${high?.toFixed(2)}</div>
-                  <div>L: ${low?.toFixed(2)}</div>
+                  <div>O: {open != null ? `$${open.toFixed(2)}` : "N/A"}</div>
+                  <div>H: {high != null ? `$${high.toFixed(2)}` : "N/A"}</div>
+                  <div>L: {low != null ? `$${low.toFixed(2)}` : "N/A"}</div>
                 </div>
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {lastUpdated && (
+        <div style={{ fontSize: "0.8rem", marginTop: "1rem", opacity: 0.75 }}>
+          Last update: {lastUpdated.toLocaleTimeString()}
         </div>
       )}
     </div>
